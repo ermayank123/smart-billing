@@ -15,6 +15,9 @@ app.disable('x-powered-by');
 // 1. CORS — explicit whitelist (works with credentials: true)
 //    Handles localhost:3000, 127.0.0.1:3000, :5500, :5501, file://
 // ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// 1. CORS — Production + Localhost
+// ---------------------------------------------------------------
 const ALLOWED_ORIGINS = new Set([
   'http://localhost:3000',
   'http://127.0.0.1:3000',
@@ -23,23 +26,24 @@ const ALLOWED_ORIGINS = new Set([
   'http://localhost:5501',
   'http://127.0.0.1:5501',
   'https://smart-billing-frontend.vercel.app',
-  'null',
 ]);
 
-app.use(cors({
+const corsOptions = {
   origin(origin, callback) {
-    if (!origin || ALLOWED_ORIGINS.has(origin)) return callback(null, true);
+    if (!origin || ALLOWED_ORIGINS.has(origin)) {
+      return callback(null, true);
+    }
+
     console.warn('[CORS BLOCKED]', origin);
-    return callback(new Error(`CORS blocked: ${origin}`));
+    return callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   optionsSuccessStatus: 204,
-}));
+};
 
-app.options('*', cors());
-
+app.use(cors(corsOptions));
 // ---------------------------------------------------------------
 // 2. Helmet — relaxed for cross-origin dev
 // ---------------------------------------------------------------
@@ -577,32 +581,70 @@ app.put('/api/settings', asyncRoute(async (req, res) => {
 }));
 
 // ---------------------------------------------------------------
-// 15. 404 + error handler
+// 15. 404 + Error Handler
 // ---------------------------------------------------------------
-app.use((req, res) => res.status(404).json({ error: 'API route not found', path: req.originalUrl }));
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'API route not found',
+    path: req.originalUrl,
+  });
+});
 
-app.use((err, _req, res, _next) => {
-  console.error(err);
-  const status = Number(err.status) || (err.code === 'ER_DUP_ENTRY' ? 409 : 500);
-  const message = status === 500 ? 'Internal server error. Check backend terminal logs.' : err.message;
-  res.status(status).json({ error: message });
+app.use((err, req, res, next) => {
+  console.error('[BACKEND ERROR]', {
+    method: req.method,
+    url: req.originalUrl,
+    message: err.message,
+    code: err.code,
+    stack: err.stack,
+  });
+
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  const status =
+    Number(err.status) ||
+    (err.code === 'ER_DUP_ENTRY' ? 409 : 500);
+
+  const message =
+    status === 500
+      ? 'Internal server error. Check Render logs.'
+      : err.message;
+
+  res.status(status).json({
+    success: false,
+    error: message,
+  });
 });
 
 // ---------------------------------------------------------------
 // 16. Start
 // ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// 16. Start Server
+// ---------------------------------------------------------------
 const port = Number(process.env.PORT || 3000);
+
 async function start() {
   try {
     await pool.query('SELECT 1');
+
     console.log('MySQL/MariaDB connection successful.');
+
     app.listen(port, '0.0.0.0', () => {
-  console.log(`BizFlow Pro API running at http://localhost:${port}`);
-  console.log(`                              http://127.0.0.1:${port}`);
-});
+      console.log(`BizFlow Pro API running on port ${port}`);
+    });
   } catch (err) {
-    console.error('Could not connect to MySQL/MariaDB. Check XAMPP, .env, and sql/schema.sql.', err.message);
+    console.error(
+      'Could not connect to MySQL/MariaDB:',
+      err.message
+    );
+
     process.exit(1);
   }
 }
+
+start();
 start();
