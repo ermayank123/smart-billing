@@ -2,6 +2,3 @@ node_modules/
 .env
 .env.*
 !.env.example
-check-script-*.js
-.DS_Store
-Thumbs.db
