@@ -89,11 +89,14 @@ app.use('/api', rateLimit({
 // ---------------------------------------------------------------
 // 6. Health / info
 // ---------------------------------------------------------------
-app.get('/api', (_req, res) => res.json({
-  name: 'BizFlow Pro API',
-  status: 'running',
-  docs: '/api/health',
-}));
+app.get('/', (_req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'BizFlow Pro Backend is running',
+    api: '/api',
+    health: '/api/health'
+  });
+});
 
 app.get('/api/health', asyncRoute(async (_req, res) => {
   const [rows] = await pool.query('SELECT 1 AS db_ok');
