@@ -590,20 +590,12 @@ app.use((err, _req, res, _next) => {
 const port = Number(process.env.PORT || 3000);
 async function start() {
   try {
-    await pool.query("SELECT 1");
-    console.log("MySQL/MariaDB connection successful.");
-
-    app.listen(port, "0.0.0.0", () => {
-      console.log(`BizFlow Pro API running on port ${port}`);
-    });
-
-  } catch (error) {
-    console.error("Server startup failed:", error);
-    process.exit(1);
-  }
-}
-
-start();
+    await pool.query('SELECT 1');
+    console.log('MySQL/MariaDB connection successful.');
+    app.listen(port, '0.0.0.0', () => {
+  console.log(`BizFlow Pro API running at http://localhost:${port}`);
+  console.log(`                              http://127.0.0.1:${port}`);
+});
   } catch (err) {
     console.error('Could not connect to MySQL/MariaDB. Check XAMPP, .env, and sql/schema.sql.', err.message);
     process.exit(1);
