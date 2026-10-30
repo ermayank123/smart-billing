@@ -3032,7 +3032,7 @@ function updateBillDropdown(){
 <script>
 /* BizFlow Pro API bridge: preserves the existing UI/design; MySQL via Express is the source of truth. */
 (function(){
-  const API_BASE = 'https://smart-billing-a4qh.onrender.com/api';
+  const API_BASE =  'https://smart-billing-a4qh.onrender.com/api';
   let ready = false, syncing = Promise.resolve(), baseline = {}, lastInvoiceIds = new Set();
   const json = v => JSON.parse(JSON.stringify(v));
   async function req(path, options={}) {
