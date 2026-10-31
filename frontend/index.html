@@ -1978,11 +1978,21 @@ function editProduct(id){
   openModal('addProductModal');
 }
 
-function deleteProduct(id){
-  if(!confirm('Delete this product?')) return;
-  DB.products = DB.products.filter(p=>p.id!==id);
-  renderProducts();renderStock();updateDashboard();
-  showToast('Product deleted','info');
+async function deleteProduct(id){
+  if(!confirm('Delete this product from the database?')) return;
+  const productId = Number(id);
+  const existing = DB.products.find(p=>Number(p.id)===productId);
+  if(!existing) return;
+  // Update the in-memory list, then persist the difference through the API bridge.
+  DB.products = DB.products.filter(p=>Number(p.id)!==productId);
+  renderProducts(); renderStock(); updateDashboard();
+  try {
+    await BizAPI.persist();
+    showToast('Product deleted from database','success');
+  } catch (err) {
+    console.error('Product delete failed:', err);
+    showToast('Delete failed: '+err.message,'error');
+  }
 }
 
 function filterProducts(cat,el){
@@ -3375,7 +3385,13 @@ function saveCampaign(){
 }
 
 function toggleCampaign(id,el){const c=DB.campaigns.find(x=>x.id===id);if(c){c.active=!c.active;el.classList.toggle('on');}renderDiscounts();BizAPI.persist();}
-function deleteCampaign(id){DB.campaigns=DB.campaigns.filter(c=>c.id!==id);renderDiscounts();BizAPI.persist();showToast('Campaign deleted','info');}
+async function deleteCampaign(id){
+  if(!confirm('Delete this campaign?')) return;
+  DB.campaigns=DB.campaigns.filter(c=>Number(c.id)!==Number(id));
+  renderDiscounts();
+  try { await BizAPI.persist(); showToast('Campaign deleted from database','success'); }
+  catch(err) { console.error(err); showToast('Delete failed: '+err.message,'error'); }
+}
 
 // ═══════════════════════════════════════════════════════════
 //  WARRANTY
@@ -3435,7 +3451,11 @@ const API_BASE = isLocal
   let ready = false, syncing = Promise.resolve(), baseline = {}, lastInvoiceIds = new Set();
   const json = v => JSON.parse(JSON.stringify(v));
   async function req(path, options={}) {
-    const res = await fetch(API_BASE + path, { ...options, headers: { 'Content-Type':'application/json', ...(options.headers||{}) } });
+    const res = await fetch(API_BASE + path, {
+      ...options,
+      cache: 'no-store',
+      headers: { 'Content-Type':'application/json', ...(options.headers||{}) }
+    });
     let body={}; try { body=await res.json(); } catch(_) {}
     if(!res.ok) throw new Error(body.error || `API request failed (${res.status})`);
     return body;
@@ -3478,7 +3498,12 @@ const API_BASE = isLocal
   function indexById(list){return new Map((list||[]).map(x=>[Number(x.id),x]));}
   async function syncResource(key,path,toPayload,{skipIds=new Set()}={}){
     const before=indexById(baseline[key]||[]), now=indexById(DB[key]||[]);
-    for(const [id,old] of before){if(!now.has(id)){try{await req(`/${path}/${id}`,{method:'DELETE'});}catch(e){console.warn('Delete sync failed',path,id,e.message);}}}
+    // Deletions must be confirmed by MySQL. Never swallow a failed DELETE.
+    for(const [id,old] of before){
+      if(!now.has(id)){
+        await req(`/${path}/${id}`,{method:'DELETE'});
+      }
+    }
     for(const [id,item] of now){if(skipIds.has(id))continue;const old=before.get(id);if(old&&JSON.stringify(old)===JSON.stringify(item))continue;
       const payload=toPayload(item);
       if(!old){const result=await req('/'+path,{method:'POST',body:JSON.stringify(payload)});if(result.data&&result.data.id&&Number(result.data.id)!==id){item.id=Number(result.data.id);}}
@@ -3528,8 +3553,21 @@ const API_BASE = isLocal
     showAPIStatus('Saved to MySQL','success',1600);
   }
   function persist(){
-    if(!ready){showAPIStatus('Waiting for API connection…','info');return;}
-    syncing=syncing.then(syncAll).catch(err=>{console.error('BizFlow API sync failed:',err);showAPIStatus('API save failed: '+err.message,'error',5000);showToast('Could not save to database: '+err.message,'error');});
+    if(!ready){
+      const error = new Error('Database API is not connected. Start MySQL and the Node backend first.');
+      showAPIStatus('Waiting for API connection…','error',3000);
+      return Promise.reject(error);
+    }
+    // Serialize writes so refresh/delete/update operations cannot race each other.
+    syncing = syncing.then(syncAll);
+    return syncing.catch(async err=>{
+      console.error('BizFlow API sync failed:',err);
+      showAPIStatus('API save failed: '+err.message,'error',5000);
+      showToast('Could not save to database: '+err.message,'error');
+      // Re-read the source of truth so a failed local delete cannot remain visible.
+      try { await loadAll(); } catch(loadErr) { console.error('Database reload failed:',loadErr); }
+      throw err;
+    });
   }
   window.addEventListener('unhandledrejection',e=>{console.error(e.reason);});
   window.BizFlowAPI={base:API_BASE,request:req,reload:async()=>{await loadAll();},isReady:()=>ready};
@@ -3543,9 +3581,16 @@ const API_BASE = isLocal
       const rsDate=document.getElementById('rsDate');if(rsDate)rsDate.value=new Date().toISOString().slice(0,10);
       const eDate=document.getElementById('eDate');if(eDate)eDate.value=new Date().toISOString().slice(0,10);
     }catch(err){console.error('API boot failed:',err);showAPIStatus('API disconnected','error',8000);showToast('Backend/MySQL connection failed. Start XAMPP MySQL and run npm run dev. '+err.message,'error');
-      // 🔁 ALWAYS RENDER UI — even if API is unreachable
-      if(typeof bootFromLocalCache==='function') bootFromLocalCache();
-      const alerts=document.getElementById('alertsList');if(alerts)alerts.innerHTML='<div class="alert-item"><span class="alert-dot" style="background:var(--red)"></span><div><p><b>Backend unavailable</b></p><span>Start MySQL in XAMPP and the Node API on port 3000, then refresh.</span></div></div>';
+      // MySQL is the source of truth: do not silently load stale localStorage/sample data.
+      ready=false;
+      DB.products=[]; DB.customers=[]; DB.suppliers=[]; DB.expenses=[];
+      DB.campaigns=[]; DB.warranties=[]; DB.invoices=[]; DB.restocks=[];
+      setDate(); updateDashboard(); renderProducts(); renderStock(); renderInvoices();
+      renderCustomers(); renderSuppliers(); renderExpenses(); renderRestocks();
+      if(typeof renderCashFlow==='function')renderCashFlow();
+      if(typeof renderDiscounts==='function')renderDiscounts();
+      if(typeof renderWarranty==='function')renderWarranty();
+      const alerts=document.getElementById('alertsList');if(alerts)alerts.innerHTML='<div class="alert-item"><span class="alert-dot" style="background:var(--red)"></span><div><p><b>Backend unavailable</b></p><span>Start XAMPP MySQL and the Node API on port 3000, then refresh. Data is not loaded from stale browser storage.</span></div></div>';
     }
   };
 })();
