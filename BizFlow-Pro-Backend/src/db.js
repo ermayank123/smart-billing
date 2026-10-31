@@ -1,16 +1,31 @@
+
 const mysql = require('mysql2/promise');
 
+const requiredEnv = ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
+
+for (const key of requiredEnv) {
+  if (!process.env[key]) {
+    throw new Error(`Missing environment variable: ${key}`);
+  }
+}
+
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || '127.0.0.1',  // <-- JUST the IP, no port
-  port: Number(process.env.DB_PORT || 3306), // <-- MySQL default port
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'bizflow_pro',
+  host: process.env.DB_HOST.trim(),
+  port: Number(process.env.DB_PORT),
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
   decimalNumbers: true,
-  timezone: 'Z'
+  timezone: 'Z',
+
+  // Aiven MySQL SSL connection
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
 module.exports = pool;
