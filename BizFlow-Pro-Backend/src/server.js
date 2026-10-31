@@ -119,10 +119,15 @@ app.get('/api/health', asyncRoute(async (_req, res) => {
 function registerCrud({ path: routePath, table, fields, required = [], orderBy = 'id DESC', searchable = [] }) {
   app.get(`/api/${routePath}`, asyncRoute(async (req, res) => {
     const q = (req.query.q || '').toString().trim();
-    let sql = `SELECT * FROM ${table}`;
+    // Hide archived products from normal product lists while retaining their
+    // rows for historical invoice/restock foreign-key references.
+    let sql = table === 'products'
+      ? 'SELECT * FROM products WHERE active = 1'
+      : `SELECT * FROM ${table}`;
     const params = [];
     if (q && searchable.length) {
-      sql += ' WHERE ' + searchable.map(col => `${col} LIKE ?`).join(' OR ');
+      sql += (table === 'products' ? ' AND ' : ' WHERE ')
+        + '(' + searchable.map(col => `${col} LIKE ?`).join(' OR ') + ')';
       searchable.forEach(() => params.push(`%${q}%`));
     }
     sql += ` ORDER BY ${orderBy} LIMIT 1000`;
@@ -174,9 +179,14 @@ function registerCrud({ path: routePath, table, fields, required = [], orderBy =
   }));
 
   app.delete(`/api/${routePath}/:id`, asyncRoute(async (req, res) => {
-    const [result] = await pool.execute(`DELETE FROM ${table} WHERE id = ?`, [req.params.id]);
+    // Products may be referenced by invoice_items/restock_items. Archive them
+    // instead of physically deleting rows and breaking historical records.
+    const sql = table === 'products'
+      ? 'UPDATE products SET active = 0 WHERE id = ? AND active = 1'
+      : `DELETE FROM ${table} WHERE id = ?`;
+    const [result] = await pool.execute(sql, [req.params.id]);
     if (!result.affectedRows) return res.status(404).json({ error: 'Record not found' });
-    res.json({ ok: true, message: 'Deleted' });
+    res.json({ ok: true, message: table === 'products' ? 'Product archived' : 'Deleted' });
   }));
 }
 
@@ -647,4 +657,3 @@ async function start() {
 }
 
 start();
-
